@@ -141,7 +141,7 @@ describe('TaggedDataSource', function () {
           runTest,
         );
 
-        assertFailure(exit)
+        assertFailure(exit);
         expect((exit.cause as Cause.Fail<any>).error).toStrictEqual(PropagationError.of(Propagation.NEVER));
       });
     });

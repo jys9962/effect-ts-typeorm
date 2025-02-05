@@ -17,16 +17,23 @@ npm i @jys9962/effect-ts-typeorm
 export class MyDB extends TaggedDataSource('DataSource')<MyDB>() {}
 
 // Create Layer with TypeORM DataSource
-const dataSource: DataSource // = {...}
-const MyDataSourceLive = Layer.succeed(MyDB, MyDB.of(dataSource)); 
+const dataSource: DataSource; // = {...}
+const MyDataSourceLive = Layer.succeed(MyDB, MyDB.of(dataSource));
 
 // Use transaction
-pipe(
-  // your database operations
+Effect.gen(function* () {
+  // Not related to the transaction
+  const dataSource: DataSource = yield* ADB;
+
+  // Within a transaction
+  const manager: EntityManager = yield* ADB.manager;
+  const repository: Repository<UserEntity> = yield* ADB.getRepository(UserEntity);
+  
+}).pipe(
   MyDB.transactional(),
   Effect.provide(MyDataSourceLive),
-  Effect.runPromise
-)
+  Effect.runPromise,
+);
 ```
 
 ### Transaction Propagation

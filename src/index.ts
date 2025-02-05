@@ -1,5 +1,5 @@
 import { Context, Effect, Option } from 'effect';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { Propagation } from './enums/Propagation';
 import { ObjectLiteral } from 'typeorm/common/ObjectLiteral';
 import { EntityTarget } from 'typeorm/common/EntityTarget';
@@ -11,6 +11,8 @@ export interface ITaggedDataSource<Self, Id> extends Context.TagClass<Self, Id, 
   get txId(): Effect.Effect<Option.Option<string>>;
 
   get isInTransaction(): Effect.Effect<boolean>;
+
+  get manager(): Effect.Effect<EntityManager, never, Self>;
 
   transactional(
     propagation?: Propagation,
