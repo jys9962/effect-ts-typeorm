@@ -1,6 +1,5 @@
 import { Effect, Option, pipe } from 'effect';
 import { EntityManager, QueryRunner } from 'typeorm';
-import { v4 as uuidv4 } from 'uuid';
 import { EventType } from '../enums/EventType';
 
 export type EventCallback = (error?: Error) => (void | Effect.Effect<any>)
@@ -15,10 +14,9 @@ export class TransactionContext {
 
   constructor(
     readonly manager: EntityManager,
+    id?: string,
   ) {
-    this.id = manager.queryRunner?.isTransactionActive
-      ? Option.some(uuidv4())
-      : Option.none();
+    this.id = Option.fromNullable(id);
   }
 
 

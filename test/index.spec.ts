@@ -1,6 +1,6 @@
 import { Cause, Effect, Exit, Layer, Option, pipe } from 'effect';
 import { Propagation } from '../src/enums/Propagation';
-import { ADB, BDB } from './db';
+import { ADB, BDB } from './DB';
 import { DataSourceFixture } from './dataSource.fixture';
 import { DataSource } from 'typeorm';
 import { PropagationError } from '../src/error/PropagationError';
@@ -39,8 +39,8 @@ describe('TaggedDataSource', function () {
 
     runTest = makeRunTest(
       Layer.merge(
-        Layer.succeed(ADB, ADB.of(ADataSource)),
-        Layer.succeed(BDB, BDB.of(BDataSource)),
+        ADB.makeLayer(ADataSource),
+        BDB.makeLayer(BDataSource),
       ),
     );
   });
@@ -50,13 +50,32 @@ describe('TaggedDataSource', function () {
     await BDataSource.destroy();
   });
 
+  describe('makeLive', function () {
+    it('throw error when use different tag', async function () {
+      const dataSource = DataSourceFixture.createA();
+      await dataSource.initialize();
+      const result = () => pipe(
+        ADB,
+        Effect.provide(BDB.make(dataSource) as any as Layer.Layer<ADB>),
+        Effect.runPromise,
+      );
+
+      await expect(result).rejects.toThrow();
+      await dataSource.destroy();
+    });
+  });
+
   describe('isInTransaction', function () {
     it('Returns true when in a transaction', async function () {
-      const exit = await pipe(
-        ADB.isInTransaction,
-        ADB.transactional(Propagation.REQUIRES_NEW),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+        const bDb = yield* BDB;
+
+        return yield* pipe(
+          aDb.isInTransaction,
+          aDb.transactional(Propagation.REQUIRES_NEW),
+        );
+      }).pipe(runTest);
 
       assertSuccess(exit);
       const result = exit.value;
@@ -64,11 +83,13 @@ describe('TaggedDataSource', function () {
     });
 
     it('Returns false when not in a transaction', async function () {
-      const exit = await pipe(
-        ADB.isInTransaction,
-        ADB.transactional(Propagation.NEVER),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+        return yield* pipe(
+          aDb.isInTransaction,
+          aDb.transactional(Propagation.NEVER),
+        );
+      }).pipe(runTest);
 
       assertSuccess(exit);
       const result = exit.value;
@@ -76,11 +97,14 @@ describe('TaggedDataSource', function () {
     });
 
     it('Returns false when in a transaction from a different database', async function () {
-      const exit = await pipe(
-        ADB.isInTransaction,
-        BDB.transactional(Propagation.REQUIRES_NEW),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+        const bDb = yield* BDB;
+        return yield* pipe(
+          aDb.isInTransaction,
+          bDb.transactional(Propagation.REQUIRES_NEW),
+        );
+      }).pipe(runTest);
 
       assertSuccess(exit);
       const result = exit.value;
@@ -89,28 +113,33 @@ describe('TaggedDataSource', function () {
   });
 
   describe('Transactional', function () {
-
     describe('Propagation.MANDATORY', function () {
       it('Throws an error when not in a transaction', async function () {
-        const exit = await pipe(
-          ADB.isInTransaction,
-          ADB.transactional(Propagation.MANDATORY),
-          ADB.transactional(Propagation.NOT_SUPPORTED),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.isInTransaction,
+            aDb.transactional(Propagation.MANDATORY),
+            aDb.transactional(Propagation.NOT_SUPPORTED),
+          );
+        }).pipe(runTest);
 
         assertFailure(exit);
-        expect((exit.cause as Cause.Fail<any>).error).toStrictEqual(PropagationError.of(Propagation.MANDATORY));
+        expect((exit.cause as Cause.Fail<any>).error).toStrictEqual(
+          PropagationError.of(Propagation.MANDATORY),
+        );
       });
 
       it('Maintains the current transaction without creating a new one', async function () {
-        const exit = await pipe(
-          ADB.txId,
-          ADB.transactional(Propagation.MANDATORY),
-          Effect.andThen((txid) => Effect.all([Effect.succeed(txid), ADB.txId])),
-          ADB.transactional(Propagation.REQUIRES_NEW),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.txId,
+            aDb.transactional(Propagation.MANDATORY),
+            Effect.andThen((txid) => Effect.all([Effect.succeed(txid), aDb.txId])),
+            aDb.transactional(Propagation.REQUIRES_NEW),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -118,15 +147,14 @@ describe('TaggedDataSource', function () {
         const id2 = Option.getOrThrow(result[1]);
         expect(id1).toBe(id2);
       });
-
     });
+
     describe('Propagation.NEVER', function () {
       it('Remains unchanged when not in a transaction', async function () {
-        const exit = await pipe(
-          ADB.isInTransaction,
-          ADB.transactional(Propagation.NEVER),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(aDb.isInTransaction, aDb.transactional(Propagation.NEVER));
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -134,40 +162,49 @@ describe('TaggedDataSource', function () {
       });
 
       it('Throws an error when in a transaction', async function () {
-        const exit = await pipe(
-          Effect.void,
-          ADB.transactional(Propagation.NEVER),
-          ADB.transactional(Propagation.REQUIRED),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            Effect.void,
+            aDb.transactional(Propagation.NEVER),
+            aDb.transactional(Propagation.REQUIRED),
+          );
+        }).pipe(runTest);
 
         assertFailure(exit);
-        expect((exit.cause as Cause.Fail<any>).error).toStrictEqual(PropagationError.of(Propagation.NEVER));
+        expect((exit.cause as Cause.Fail<any>).error).toStrictEqual(
+          PropagationError.of(Propagation.NEVER),
+        );
       });
     });
 
     describe('Propagation.NOT_SUPPORTED', function () {
       it('Executes separately from the transaction even when in a transaction', async function () {
-        const exit = await pipe(
-          ADB.isInTransaction,
-          ADB.transactional(Propagation.NOT_SUPPORTED),
-          ADB.transactional(Propagation.REQUIRES_NEW),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.isInTransaction,
+            aDb.transactional(Propagation.NOT_SUPPORTED),
+            aDb.transactional(Propagation.REQUIRES_NEW),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
         expect(result).toBe(false);
       });
     });
+
     describe('Propagation.REQUIRED', function () {
       it('Creates a new transaction when not already in a transaction', async function () {
-        const exit = await pipe(
-          ADB.isInTransaction,
-          ADB.transactional(Propagation.REQUIRED),
-          ADB.transactional(Propagation.NOT_SUPPORTED),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.isInTransaction,
+            aDb.transactional(Propagation.REQUIRED),
+            aDb.transactional(Propagation.NOT_SUPPORTED),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -175,13 +212,15 @@ describe('TaggedDataSource', function () {
       });
 
       it('Maintains the current transaction without creating a new one', async function () {
-        const exit = await pipe(
-          ADB.txId,
-          ADB.transactional(Propagation.REQUIRED),
-          Effect.andThen((txid) => Effect.all([Effect.succeed(txid), ADB.txId])),
-          ADB.transactional(Propagation.REQUIRED),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.txId,
+            aDb.transactional(Propagation.REQUIRED),
+            Effect.andThen((txid) => Effect.all([Effect.succeed(txid), aDb.txId])),
+            aDb.transactional(Propagation.REQUIRED),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -190,15 +229,18 @@ describe('TaggedDataSource', function () {
         expect(id1).toBe(id2);
       });
     });
+
     describe('Propagation.REQUIRES_NEW', function () {
       it('Creates a new transaction even when already in a transaction', async function () {
-        const exit = await pipe(
-          ADB.txId,
-          ADB.transactional(Propagation.REQUIRES_NEW),
-          Effect.andThen((txid) => Effect.all([Effect.succeed(txid), ADB.txId])),
-          ADB.transactional(Propagation.REQUIRED),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.txId,
+            aDb.transactional(Propagation.REQUIRES_NEW),
+            Effect.andThen((txid) => Effect.all([Effect.succeed(txid), aDb.txId])),
+            aDb.transactional(Propagation.REQUIRED),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -208,12 +250,14 @@ describe('TaggedDataSource', function () {
       });
 
       it('Creates a new transaction when not in a transaction', async function () {
-        const exit = await pipe(
-          ADB.isInTransaction,
-          ADB.transactional(Propagation.REQUIRES_NEW),
-          ADB.transactional(Propagation.NEVER),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.isInTransaction,
+            aDb.transactional(Propagation.REQUIRES_NEW),
+            aDb.transactional(Propagation.NEVER),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -223,12 +267,14 @@ describe('TaggedDataSource', function () {
 
     describe('Propagation.SUPPORTS', function () {
       it('Remains unchanged when not in a transaction', async function () {
-        const exit = await pipe(
-          ADB.isInTransaction,
-          ADB.transactional(Propagation.SUPPORTS),
-          ADB.transactional(Propagation.NEVER),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.isInTransaction,
+            aDb.transactional(Propagation.SUPPORTS),
+            aDb.transactional(Propagation.NEVER),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -236,13 +282,15 @@ describe('TaggedDataSource', function () {
       });
 
       it('Maintains the current transaction without creating a new one', async function () {
-        const exit = await pipe(
-          ADB.txId,
-          ADB.transactional(Propagation.SUPPORTS),
-          Effect.andThen((txid) => Effect.all([Effect.succeed(txid), ADB.txId])),
-          ADB.transactional(Propagation.REQUIRES_NEW),
-          runTest,
-        );
+        const exit = await Effect.gen(function* () {
+          const aDb = yield* ADB;
+          return yield* pipe(
+            aDb.txId,
+            aDb.transactional(Propagation.SUPPORTS),
+            Effect.andThen((txid) => Effect.all([Effect.succeed(txid), aDb.txId])),
+            aDb.transactional(Propagation.REQUIRES_NEW),
+          );
+        }).pipe(runTest);
 
         assertSuccess(exit);
         const result = exit.value;
@@ -254,75 +302,97 @@ describe('TaggedDataSource', function () {
   });
 
   describe('runOnCommit', function () {
-
     it('Successful case', async function () {
-      let runCount = 0;
-      await pipe(
-        ADB.runOnCommit(() => {
-          runCount += 1;
-        }),
-        ADB.transactional(),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        let runCount = 0;
+        const aDb = yield* ADB;
 
-      expect(runCount).toBe(1);
+        yield* pipe(
+          aDb.runOnCommit(() => {
+            runCount += 1;
+          }),
+          aDb.transactional(),
+        );
+
+        return runCount;
+      }).pipe(runTest);
+
+      assertSuccess(exit);
+      expect(exit.value).toBe(1);
     });
 
     it('Does not execute when not in a transaction', async function () {
-      let runCount = 0;
-      await pipe(
-        ADB.runOnCommit(() => {
-          runCount += 1;
-        }),
-        ADB.transactional(Propagation.NEVER),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        let runCount = 0;
+        const aDb = yield* ADB;
 
-      expect(runCount).toBe(0);
+        yield* pipe(
+          aDb.runOnCommit(() => {
+            runCount += 1;
+          }),
+          aDb.transactional(Propagation.NEVER),
+        );
+
+        return runCount;
+      }).pipe(runTest);
+
+      assertSuccess(exit);
+      expect(exit.value).toBe(0);
     });
 
     it('Executes only once even if duplicate transactions exist', async function () {
-      let runCount = 0;
-      await pipe(
-        ADB.runOnCommit(() => {
-          runCount += 1;
-        }),
-        ADB.transactional(Propagation.REQUIRES_NEW),
-        ADB.transactional(Propagation.REQUIRES_NEW),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        let runCount = 0;
+        const aDb = yield* ADB;
 
-      expect(runCount).toBe(1);
+        yield* pipe(
+          aDb.runOnCommit(() => {
+            runCount += 1;
+          }),
+          aDb.transactional(Propagation.REQUIRES_NEW),
+          aDb.transactional(Propagation.REQUIRES_NEW),
+        );
+
+        return runCount;
+      }).pipe(runTest);
+
+      assertSuccess(exit);
+      expect(exit.value).toBe(1);
     });
 
     it('Does not execute if the transaction fails', async function () {
       let runCount = 0;
-      await pipe(
-        ADB.runOnCommit(() => {
-          runCount += 1;
-        }),
-        Effect.andThen(() => Effect.fail(new Error())),
-        ADB.transactional(Propagation.REQUIRES_NEW),
-        ADB.transactional(Propagation.REQUIRES_NEW),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+
+        yield* pipe(
+          aDb.runOnCommit(() => {
+            runCount += 1;
+          }),
+          Effect.andThen(() => Effect.fail(new Error())),
+          aDb.transactional(Propagation.REQUIRES_NEW),
+          aDb.transactional(Propagation.REQUIRES_NEW),
+        );
+      }).pipe(runTest);
 
       expect(runCount).toBe(0);
     });
-
   });
 
   describe('runOnRollback', function () {
     it('Successful case', async function () {
       let runCount = 0;
-      await pipe(
-        ADB.runOnRollback(() => {
-          runCount++;
-        }),
-        Effect.andThen(() => Effect.fail(new Error)),
-        ADB.transactional(Propagation.REQUIRED),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+
+        yield* pipe(
+          aDb.runOnRollback(() => {
+            runCount++;
+          }),
+          Effect.andThen(() => Effect.fail(new Error())),
+          aDb.transactional(Propagation.REQUIRED),
+        );
+      }).pipe(runTest);
 
       expect(runCount).toBe(1);
     });
@@ -331,29 +401,36 @@ describe('TaggedDataSource', function () {
   describe('runOnComplete', function () {
     it('Executes when successful', async function () {
       let runCount = 0;
-      await pipe(
-        ADB.runOnComplete(() => {
-          runCount++;
-        }),
-        ADB.transactional(Propagation.REQUIRED),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+
+        yield* pipe(
+          aDb.runOnComplete(() => {
+            runCount++;
+          }),
+          aDb.transactional(Propagation.REQUIRED),
+        );
+      }).pipe(runTest);
 
       expect(runCount).toBe(1);
     });
 
     it('Executes when failed', async function () {
       let runCount = 0;
-      await pipe(
-        ADB.runOnComplete(() => {
-          runCount++;
-        }),
-        Effect.andThen(() => Effect.fail(new Error)),
-        ADB.transactional(Propagation.REQUIRED),
-        runTest,
-      );
+      const exit = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+
+        yield* pipe(
+          aDb.runOnComplete(() => {
+            runCount++;
+          }),
+          Effect.andThen(() => Effect.fail(new Error())),
+          aDb.transactional(Propagation.REQUIRED),
+        );
+      }).pipe(runTest);
 
       expect(runCount).toBe(1);
     });
   });
+
 });
