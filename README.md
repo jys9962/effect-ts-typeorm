@@ -13,27 +13,50 @@ npm i @jys9962/effect-ts-typeorm
 ### Create DataSource class
 
 ```typescript
+const dataSource: DataSource; // = new ... 
+
 // Create your database class
-export class MyDB extends TaggedDataSource('DataSource')<MyDB>() {}
-
-// Create Layer with TypeORM DataSource
-const dataSource: DataSource; // = {...}
-const MyDataSourceLive = Layer.succeed(MyDB, MyDB.of(dataSource));
-
-// Use transaction
-Effect.gen(function* () {
-  // Not related to the transaction
-  const dataSource: DataSource = yield* ADB;
-
-  // Within a transaction
-  const manager: EntityManager = yield* ADB.manager;
-  const repository: Repository<UserEntity> = yield* ADB.getRepository(UserEntity);
+export class MyDatabase extends EffectTypeORM('MyDatabase')<MyDatabase>() {
   
-}).pipe(
-  MyDB.transactional(),
-  Effect.provide(MyDataSourceLive),
-  Effect.runPromise,
-);
+  static readonly Live: Layer.Layer<MyDatabase> =
+    this.makeLayer(dataSource);
+  
+  static readonly Test: Layer.Layer<MyDatabase> =
+    this.makeTest();
+  
+}
+
+export class MyService extends Effect.Service<Db>()('Db', {
+  effect: Effect.gen(function* () {
+    const myDb = yield* MyDatabase;
+    
+    // transaction function
+    const myFunc = Effect.gen(function* () {
+      // Not related to the transaction
+      const dataSource = yield* myDb.dataSource;
+
+      // Within a transaction
+      const manager: EntityManager = yield* myDb.manager;
+      const repository: Repository<UserEntity> = yield* myDb.getRepository(UserEntity);
+
+      // ...
+
+    }).pipe(
+      myDb.transactional(),
+    );
+
+    return {
+      myFunc,
+    } as const;
+  }),
+  dependencies: [MyDatabase.Live],
+}) {
+  // use test
+  static Test = this.DefaultWithoutDependencies.pipe(
+    Layer.merge(MyDatabase.Test),
+  );
+}
+
 ```
 
 ### Transaction Propagation
@@ -67,9 +90,8 @@ export enum Propagation {
   SUPPORTS = 'SUPPORTS'
 }
 
-MyDB.transactional(Propagation.REQUIRED)
 // Default = Propagation.REQUIRED 
-MyDB.transactional()
+myDb.transactional(Propagation.REQUIRED)
 ```
 
 ### Transaction Hooks
@@ -77,26 +99,26 @@ MyDB.transactional()
 ```typescript
 // Run after successful commit
 pipe(
-  MyDB.runOnCommit(() => {
+  myDb.runOnCommit(() => {
     console.log('Committed!')
   }),
-  MyDB.transactional()
+  myDb.transactional()
 )
 
 // Run after rollback
 pipe(
-  MyDB.runOnRollback(() => {
+  myDb.runOnRollback(() => {
     console.log('Rolled back!')
   }),
-  MyDB.transactional()
+  myDb.transactional()
 )
 
 // Run after transaction completes (success or failure)
 pipe(
-  MyDB.runOnComplete(() => {
+  myDb.runOnComplete(() => {
     console.log('Completed!')
   }),
-  MyDB.transactional()
+  myDb.transactional()
 )
 ```
 

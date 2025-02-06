@@ -57,5 +57,5 @@ export const taggedDataSourceImpl =
             Layer.effect(this, makeForTest(this)());
       } satisfies DbImpl<Self, any> as DbImpl<Self, Id>;
 
-export const DB: <const Id extends string>(id: Id) => <Self>() => DbImpl<Self, Id> =
+export const EffectTypeORM: <const Id extends string>(id: Id) => <Self>() => DbImpl<Self, Id> =
   taggedDataSourceImpl;
