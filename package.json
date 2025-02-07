@@ -1,6 +1,6 @@
 {
   "name": "@jys9962/effect-ts-typeorm",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
   "description": "Effect-TS integration for TypeORM",
@@ -10,7 +10,6 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "publish": "npm publish",
     "test": "jest"
   },
   "keywords": [],

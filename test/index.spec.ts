@@ -4,6 +4,7 @@ import { ADB, BDB } from './DB';
 import { DataSourceFixture } from './dataSource.fixture';
 import { DataSource } from 'typeorm';
 import { PropagationError } from '../src/error/PropagationError';
+import { UserEntity } from './user.entity';
 
 const makeRunTest = (
   layer: Layer.Layer<ADB | BDB>,
@@ -31,8 +32,8 @@ describe('TaggedDataSource', function () {
   let runTest: <A, E>(self: Effect.Effect<A, E, ADB | BDB>) => Promise<Exit.Exit<A, E>>;
 
   beforeAll(async function () {
-    ADataSource = DataSourceFixture.createA();
-    BDataSource = DataSourceFixture.createB();
+    ADataSource = DataSourceFixture.create({ name: 'A' });
+    BDataSource = DataSourceFixture.create({ name: 'B' });
 
     await ADataSource.initialize();
     await BDataSource.initialize();
@@ -43,25 +44,76 @@ describe('TaggedDataSource', function () {
         BDB.makeLayer(BDataSource),
       ),
     );
+
+    await ADataSource.manager.getRepository(UserEntity).save([
+      new UserEntity(1, 'name1', new Date()),
+      new UserEntity(2, 'name1', new Date()),
+    ]);
   });
 
   afterAll(async function () {
+    await ADataSource.manager.getRepository(UserEntity).clear();
+
     await ADataSource.destroy();
     await BDataSource.destroy();
   });
 
   describe('makeLive', function () {
     it('throw error when use different tag', async function () {
-      const dataSource = DataSourceFixture.createA();
+      const dataSource = DataSourceFixture.create();
       await dataSource.initialize();
       const result = () => pipe(
         ADB,
-        Effect.provide(BDB.make(dataSource) as any as Layer.Layer<ADB>),
+        Effect.provide(BDB.makeLayer(dataSource) as any as Layer.Layer<ADB>),
         Effect.runPromise,
       );
 
       await expect(result).rejects.toThrow();
       await dataSource.destroy();
+    });
+  });
+
+  describe('execute transaction', function () {
+    it('execute transaction', async function () {
+      const result = await Effect.gen(function* () {
+        const aDb = yield* ADB;
+        const bDb = yield* BDB;
+
+        return yield* Effect.gen(function* () {
+          const userRepository_A = yield* aDb.getRepository(UserEntity);
+          const userRepository_B = yield* bDb.getRepository(UserEntity);
+
+          const user_a = yield* Effect.promise(() =>
+            userRepository_A.findOne({
+              where: { id: 1 },
+              lock: {
+                mode: 'pessimistic_write',
+              },
+            }),
+          );
+
+          const user_b = yield* Effect.promise(() =>
+            userRepository_B.findOne({
+              where: { id: 1 },
+              lock: {
+                mode: 'pessimistic_write',
+                onLocked: 'skip_locked',
+              },
+            }),
+          );
+
+          return user_a != null &&
+                 user_b == null;
+        }).pipe(
+          aDb.transactional(),
+          bDb.transactional(),
+        );
+      }).pipe(
+        runTest,
+      );
+
+      assertSuccess(result);
+      expect(result.value).toBe(true);
     });
   });
 
