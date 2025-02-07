@@ -26,7 +26,7 @@ export class MyDatabase extends EffectTypeORM('MyDatabase')<MyDatabase>() {
   
 }
 
-export class MyService extends Effect.Service<Db>()('Db', {
+export class MyService extends Effect.Service<MyService>()('MyService', {
   effect: Effect.gen(function* () {
     const myDb = yield* MyDatabase;
     
