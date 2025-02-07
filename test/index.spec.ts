@@ -74,7 +74,7 @@ describe('TaggedDataSource', function () {
   });
 
   describe('execute transaction', function () {
-    it('execute transaction', async function () {
+    it('check transaction by row locked', async function () {
       const result = await Effect.gen(function* () {
         const aDb = yield* ADB;
         const bDb = yield* BDB;
@@ -83,7 +83,7 @@ describe('TaggedDataSource', function () {
           const userRepository_A = yield* aDb.getRepository(UserEntity);
           const userRepository_B = yield* bDb.getRepository(UserEntity);
 
-          const user_a = yield* Effect.promise(() =>
+          const userByA = yield* Effect.promise(() =>
             userRepository_A.findOne({
               where: { id: 1 },
               lock: {
@@ -92,7 +92,7 @@ describe('TaggedDataSource', function () {
             }),
           );
 
-          const user_b = yield* Effect.promise(() =>
+          const userByB = yield* Effect.promise(() =>
             userRepository_B.findOne({
               where: { id: 1 },
               lock: {
@@ -102,8 +102,7 @@ describe('TaggedDataSource', function () {
             }),
           );
 
-          return user_a != null &&
-                 user_b == null;
+          return { userByA, userByB }
         }).pipe(
           aDb.transactional(),
           bDb.transactional(),
@@ -113,7 +112,8 @@ describe('TaggedDataSource', function () {
       );
 
       assertSuccess(result);
-      expect(result.value).toBe(true);
+      expect(result.value.userByA).toBeInstanceOf(UserEntity)
+      expect(result.value.userByB).toBeNull()
     });
   });
 
